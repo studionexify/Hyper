@@ -304,7 +304,7 @@ const SCENARIOS = [
 	{ id: 'ribbed', name: 'Ribbed wall', sub: 'Fluted backdrop', kit: 'ribbed', color: '#d9a9a0', color2: '#c98e84', bg: 'match', lights: 'rim', look: 'warm', css: 'repeating-linear-gradient(90deg,#d9a9a0 0 6px,#e8c0b8 6px 12px)' },
 	{ id: 'dark', name: 'Dark gallery', sub: 'Rim-lit on charcoal', kit: 'sweep', color: '#23252a', bg: 'match', lights: 'rim', look: 'punch', css: 'linear-gradient(#34373d,#16171a)' },
 	{ id: 'sun', name: 'Sunlit', sub: 'Hard sun on stone', kit: 'sweep', color: '#e8dcc8', bg: 'match', lights: 'sun', look: 'warm', css: 'linear-gradient(#f6e7c8,#d8c2a0)' },
-	{ id: 'catcher', name: 'Cut-out', sub: 'Transparent + shadow', kit: 'catcher', bg: 'transparent', lights: 'soft', look: 'neutral', css: 'repeating-conic-gradient(#ccc 0 25%,#eee 0 50%) 50%/16px 16px' },
+	{ id: 'catcher', name: 'Cut-out', sub: 'Transparent, no floor', kit: 'none', bg: 'transparent', lights: 'soft', look: 'neutral', css: 'repeating-conic-gradient(#ccc 0 25%,#eee 0 50%) 50%/16px 16px' },
 ];
 
 function applyScenario( s ) {

@@ -7,7 +7,6 @@ export const KITS = {
 	steps: { name: 'Steps', sub: 'Three stepped blocks', css: 'linear-gradient(135deg,#e4d2c0 0 50%,#c9b7a4 50% 100%)' },
 	podium: { name: 'Podium', sub: 'Round plinth + sweep', css: 'radial-gradient(circle at 50% 70%,#f1ece4 0 30%,#d7d0c5 31%)' },
 	ribbed: { name: 'Ribbed wall', sub: 'Fluted backdrop', css: 'repeating-linear-gradient(90deg,#c9c4bc 0 6px,#dedad3 6px 12px)' },
-	catcher: { name: 'Shadow catcher', sub: 'Floor shadow only', css: 'linear-gradient(#fff0,#0003)' },
 	none: { name: 'Void', sub: 'No floor', css: 'linear-gradient(#2a2c31,#17181b)' },
 };
 

@@ -20,6 +20,7 @@ async function saveFile( filename, data ) {
 
 	}
 
+	if ( window.claude ) { toast( 'Saving files is not available in this view. Open the artifact in claude.ai to export.', 6000 ); return; }
 	const url = URL.createObjectURL( data instanceof Blob ? data : new Blob( [ data ] ) );
 	const a = h( 'a', { href: url, download: filename } ); document.body.append( a ); a.click(); a.remove(); setTimeout( () => URL.revokeObjectURL( url ), 4000 );
 

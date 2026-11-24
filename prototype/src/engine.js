@@ -124,6 +124,16 @@ export class Engine {
 
 	}
 
+	/** Which stage helpers are visible: raster viewport, raster while orbiting in Render, or the path tracer's scene. */
+	vis( kind ) {
+
+		this.shadowProxy.visible = kind === 'raster';
+		if ( this.sun ) this.sun.visible = kind === 'raster' && S.lights.some( l => l.on );
+		this.stageRoot.traverse( o => { if ( o.userData.catcher ) o.visible = kind === 'pt'; } );
+		this.grid.visible = kind === 'raster' && R.grid && this.mode === 'prepare';
+
+	}
+
 	invalidate() { this.dirty = true; }
 
 	// ---------------------------------------------------------------- scene content
@@ -201,7 +211,7 @@ export class Engine {
 		this.stageRoot.add( st.group ); this.floorY = st.floorY; this.floors = st.floors;
 		// raster-only contact shadow overlay (the path tracer renders real shadows from the emitters)
 		const shadowMat = new THREE.ShadowMaterial( { opacity: 0.32, color: 0x000000 } ); shadowMat.polygonOffset = true; shadowMat.polygonOffsetFactor = - 2;
-		for ( const f of st.floors ) { if ( f.userData.catcher ) { f.material = shadowMat; continue; } const o = new THREE.Mesh( f.geometry, shadowMat ); o.position.copy( f.position ); o.rotation.copy( f.rotation ); o.receiveShadow = true; o.userData.rasterOnly = true; this.shadowProxy.add( o ); }
+		for ( const f of st.floors ) { const o = new THREE.Mesh( f.geometry, shadowMat ); o.position.copy( f.position ); o.rotation.copy( f.rotation ); o.receiveShadow = true; o.userData.rasterOnly = true; this.shadowProxy.add( o ); }
 		this.sun = this.sun || new THREE.DirectionalLight( 0xffffff, 0 ); this.sun.castShadow = true;
 		this.scene.add( this.sun ); this.scene.add( this.sun.target );
 		this.sun.shadow.mapSize.set( 1024, 1024 ); this.sun.shadow.radius = 6; this.sun.shadow.bias = - 0.0004;
@@ -360,7 +370,7 @@ export class Engine {
 		this.tc.enabled = mode === 'prepare';
 		this.attachGizmo(); this.grid.visible = mode === 'prepare' && R.grid;
 		this.lightHelpers.visible = mode === 'prepare';
-		this.shadowProxy.visible = mode === 'prepare';
+		this.vis( mode === 'prepare' ? 'raster' : 'bare' );
 		this.resize();
 		if ( mode === 'render' ) { this.ptDirty = { geo: true, mat: true, env: true, cam: true }; this.paused = false; this.pt.pausePathTracing = false; }
 		this.invalidate();
@@ -373,7 +383,7 @@ export class Engine {
 		const pt = this.pt;
 		if ( this.ptDirty.geo || ! this.ptReady ) {
 
-			this.shadowProxy.visible = false; this.sun.visible = false;
+			this.vis( 'pt' );
 			this.scene.updateMatrixWorld( true ); this.applyLens();
 			pt.setScene( this.scene, this.camera ); this.ptReady = true;
 			this.ptDirty = { geo: false, mat: false, env: false, cam: false };
@@ -412,8 +422,7 @@ export class Engine {
 
 	renderRaster() {
 
-		this.rasterTone();
-		this.shadowProxy.visible = true; if ( this.sun ) this.sun.visible = true;
+		this.rasterTone(); this.vis( 'raster' );
 		const useAO = R.ao && this.mode === 'prepare';
 		this.gtao.enabled = useAO;
 		const r = this.renderer;
@@ -458,9 +467,8 @@ export class Engine {
 
 	renderRasterBare() {
 
-		this.rasterTone(); this.shadowProxy.visible = false; this.sun.visible = false;
+		this.rasterTone(); this.vis( 'bare' );
 		this.renderer.render( this.scene, this.camera );
-		this.shadowProxy.visible = true;
 
 	}
 
@@ -529,7 +537,7 @@ export class Engine {
 		let done = 0;
 		try {
 
-			this.applyLens(); this.scene.updateMatrixWorld( true ); this.shadowProxy.visible = false; this.sun.visible = false;
+			this.applyLens(); this.scene.updateMatrixWorld( true ); this.vis( 'pt' );
 			pt.setScene( this.scene, cam ); this.ptReady = true;
 			for ( let j = 0; j < ty; j ++ ) for ( let i = 0; i < tx; i ++ ) {
 
@@ -560,7 +568,7 @@ export class Engine {
 		} finally {
 
 			cam.clearViewOffset(); r.setPixelRatio( saved.pr ); r.setSize( saved.size.x, saved.size.y, false );
-			this.exporting = false; this.shadowProxy.visible = this.mode === 'prepare'; this.applyLens(); this.ptDirty = { geo: true, mat: true, env: true, cam: true }; this.resize();
+			this.exporting = false; this.vis( this.mode === 'prepare' ? 'raster' : 'bare' ); this.applyLens(); this.ptDirty = { geo: true, mat: true, env: true, cam: true }; this.resize();
 
 		}
 
