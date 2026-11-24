@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { zipSync } from 'three/examples/jsm/libs/fflate.module.js';
 import { S, R, replaceState, emit } from './state.js';
-import { clone, uid } from './util.js';
+import { clone, uid, toast } from './util.js';
 import { SAMPLES } from './samples.js';
 import { importModelFiles, finalizeModel } from './importers.js';
 
@@ -52,7 +52,7 @@ export const bind = e => { engineRef = e; };
 export async function createModel( src, engine = engineRef ) {
 
 	let group, name;
-	if ( src.kind === 'sample' ) { const s = SAMPLES[ src.id ]; group = s.build(); finalizeModel( group, S.render.maxTex ); group.traverse( o => { if ( o.isMesh ) o.userData.original = false; } ); name = s.name; }
+	if ( src.kind === 'sample' ) { const s = SAMPLES[ src.id ]; group = s.build(); finalizeModel( group, S.render.maxTex ); group.traverse( o => { if ( o.isMesh ) { o.userData.original = false; o.userData.baseSpec = clone( o.userData.spec ); } } ); name = s.name; }
 	else {
 
 		const a = await getAsset( src.assetId ); if ( ! a ) throw new Error( 'Model file is missing from this browser' );
@@ -123,6 +123,7 @@ export async function restore( snap, engine = engineRef ) {
 
 	}
 
+	if ( S.env.base === 'hdri' && ! R.envBase ) { S.env.base = 'studio'; toast( 'This scene used an HDRI that is not loaded; switched to the studio dome' ); }
 	engine.rebuildStage(); engine.updateEnvironment( true ); engine.applyLens(); engine.setCamera( S.camera.pos, S.camera.target ); engine.resize();
 	engine.ptDirty = { geo: true, mat: true, env: true, cam: true };
 	emit( 'restored' );

@@ -187,6 +187,7 @@ function boot() {
 
 	E = new Engine( $( '#cv' ), $( '#vp' ) ); ctx.E = E; P.bind( E ); window.__hyper = { E, S, R, P, tierPx }; // handle for debugging
 	ctx.change = kind => { UI.renderLeft(); if ( kind === 'budget' ) updateStatus(); };
+	ctx.onProfile = () => { buildToolbar(); E.grid.visible = R.mode === 'prepare' && R.grid; E.invalidate(); updateStatus(); };
 	ctx.renderFinal = renderFinalFlow; ctx.renderBatch = renderBatchFlow; ctx.saveScene = saveScene; ctx.loadScene = loadScene; ctx.exportProject = exportProject;
 
 	// theme
@@ -209,16 +210,17 @@ function boot() {
 
 		if ( /input|select|textarea/i.test( e.target.tagName ) ) return;
 		const k = e.key.toLowerCase();
+		if ( k === 'f' ) { E.frame(); UI.renderRight(); }
 		if ( R.mode === 'prepare' ) {
 
 			const g = { w: 'translate', e: 'rotate', r: 'scale', q: 'none' }[ k ]; if ( g ) { R.gizmo = g; buildToolbar(); E.attachGizmo(); }
-			if ( k === 'f' ) { E.frame(); UI.renderRight(); }
 			if ( ( k === 'delete' || k === 'backspace' ) && R.sel.model ) { E.removeModel( R.sel.model ); R.sel = { model: null, part: null }; E.rebuildStage(); E.attachGizmo(); UI.renderLeft(); UI.renderRight(); }
 
 		} else if ( k === ' ' ) { e.preventDefault(); E.paused = ! E.paused; buildToolbar(); }
 
 	} );
 
+	[ 'dragover', 'drop' ].forEach( ev => addEventListener( ev, e => { if ( ! e.dataTransfer?.types?.includes( 'Files' ) ) return; e.preventDefault(); if ( ev === 'drop' ) { const f = [ ...e.dataTransfer.files ]; if ( f.length && R.mode === 'prepare' ) UI.importFiles( f ); else if ( f.length ) toast( 'Switch to Prepare to import models' ); } } ) );
 	setView( 'prepare' );
 	( async () => {
 

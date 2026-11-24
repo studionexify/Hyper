@@ -1,4 +1,4 @@
-import { S, R, emit, on, defaultPost, newLight, lightPreset } from './state.js';
+import { S, R, emit, on, defaultPost, newLight, lightPreset, PROFILES } from './state.js';
 import { h, ic, icon, clamp, clone, uid, fmtBytes, toast, tierLabels, tierPx, aspects, kelvinToLinear } from './util.js';
 import { PRESETS, FINISH_CATS, PATTERNS, defaultSpec, swatchCss } from './materials.js';
 import { KITS } from './stage.js';
@@ -107,7 +107,7 @@ export async function importFiles( files ) {
 		const m = await P.addFromFiles( files ); select( m, null ); ctx.E.rebuildStage(); ctx.E.frame(); ctx.E.updateEnvironment( true ); ctx.change( 'models' );
 		toast( `Imported ${m.name}` );
 
-	} catch ( e ) { console.error( e ); toast( 'Import failed: ' + ( e.message || e ), 5000 ); }
+	} catch ( e ) { console.warn( e ); toast( 'Import failed: ' + ( e.message || e ), 5000 ); }
 
 }
 
@@ -123,7 +123,7 @@ async function setHdri( file ) {
 // ---------------------------------------------------------------- right: Prepare
 export function renderRight() {
 
-	const el = $( '#right' ); el.replaceChildren();
+	clearInterval( histTimer ); const el = $( '#right' ); el.replaceChildren();
 	const tabs = R.mode === 'prepare' ? [ [ 'transform', 'Object' ], [ 'material', 'Material' ], [ 'lights', 'Light' ], [ 'camera', 'Camera' ], [ 'stage', 'Scene' ] ] : [ [ 'output', 'Output' ], [ 'post', 'Adjust' ], [ 'look', 'Look' ] ];
 	const cur = ctx.tab[ R.mode ];
 	el.append( h( 'div.tabs', { role: 'tablist' }, tabs.map( ( [ id, l ] ) => h( 'button' + ( id === cur ? '.on' : '' ), { role: 'tab', onclick: () => { ctx.tab[ R.mode ] = id; renderRight(); } }, l ) ) ) );
@@ -211,6 +211,7 @@ function queue( meshes ) {
 function firstMesh( model ) { let f = null; model.group.traverse( o => { if ( ! f && o.isMesh ) f = o; } ); return f; }
 function resetOriginal( part ) {
 
+	if ( part.userData.baseSpec ) { part.userData.spec = clone( part.userData.baseSpec ); queue( [ part ] ); renderRight(); toast( 'Sample material restored' ); return; }
 	if ( ! part.userData.origMat ) { toast( 'This part has no imported material to restore' ); return; }
 	part.material = part.userData.origMat.clone(); part.userData.spec = null; ctx.E.ptDirty.mat = true; ctx.E.invalidate(); renderRight(); toast( 'Imported material restored' );
 
@@ -247,7 +248,7 @@ function tabLights( b ) {
 		h( 'span.nm', l.name ),
 		h( 'button.mini', { title: 'On / off', onclick: e => { e.stopPropagation(); l.on = ! l.on; ctx.E.updateEnvironment(); renderRight(); } }, ic( l.on ? 'eye' : 'eyeoff' ) ),
 		h( 'button.mini', { title: 'Delete', onclick: e => { e.stopPropagation(); S.lights = S.lights.filter( q => q !== l ); ctx.E.updateEnvironment(); renderRight(); } }, ic( 'trash' ) ) ) );
-	b.append( sec( 'Lights', [ ...list, h( 'div.split', btn( 'Softbox', () => addLight( 'softbox' ), 'sm', 'plus' ), btn( 'Strip', () => addLight( 'strip' ), 'sm', 'plus' ) ), h( 'div.split', btn( 'Disc / sun', () => addLight( 'disc' ), 'sm', 'plus' ), h( 'span' ) ) ] ) );
+	b.append( sec( 'Lights', [ ...list, h( 'div.split', btn( 'Softbox', () => addLight( 'softbox' ), 'sm', 'plus' ), btn( 'Strip', () => addLight( 'strip' ), 'sm', 'plus' ) ), h( 'div.split', btn( 'Disc / sun', () => addLight( 'disc' ), 'sm', 'plus' ), btn( 'Show all lights', () => ctx.E.frameLights(), 'sm', 'frame' ) ) ] ) );
 	const l = S.lights.find( x => x.id === R.selLight ) || S.lights[ 0 ];
 	if ( l ) {
 
@@ -255,9 +256,9 @@ function tabLights( b ) {
 		const up = () => { ctx.E.updateEnvironment(); };
 		const L = ( k, r ) => slider( Object.assign( { get: () => l[ k ], set: v => { l[ k ] = v; up(); } }, r ) );
 		b.append( sec( l.name, [ row( 'Type', sel( [ [ 'softbox', 'Softbox' ], [ 'strip', 'Strip' ], [ 'disc', 'Disc / sun' ] ], () => l.type, v => { l.type = v; up(); renderRight(); } ) ),
-			L( 'az', { label: 'Around', unit: '°', min: - 180, max: 180, step: 1, dec: 0, def: 35 } ), L( 'el', { label: 'Height', unit: '°', min: - 10, max: 90, step: 1, dec: 0, def: 38 } ), L( 'dist', { label: 'Distance', unit: 'm', min: 0.4, max: 6, step: 0.05, def: 1.4 } ) ] ) );
-		b.append( sec( 'Shape', [ l.type === 'disc' ? L( 'w', { label: 'Diameter', unit: 'm', min: 0.02, max: 3, step: 0.01, def: 0.45 } ) : L( 'w', { label: 'Width', unit: 'm', min: 0.05, max: 4, step: 0.01, def: 1 } ),
-			l.type === 'disc' ? null : L( 'h', { label: 'Height', unit: 'm', min: 0.05, max: 4, step: 0.01, def: 1 } ), L( 'soft', { label: 'Softness', min: 0.02, max: 1, def: 0.5 } ), l.type === 'disc' ? null : L( 'roll', { label: 'Roll', unit: '°', min: - 90, max: 90, step: 1, dec: 0, def: 0 } ) ] ) );
+			L( 'az', { label: 'Around', unit: '°', min: - 180, max: 180, step: 1, dec: 0, def: 35 } ), L( 'el', { label: 'Elevation', unit: '°', min: - 10, max: 90, step: 1, dec: 0, def: 38 } ), L( 'dist', { label: 'Distance', unit: 'm', min: 0.4, max: 6, step: 0.05, def: 1.4 } ) ] ) );
+		b.append( sec( 'Shape', [ l.type === 'disc' ? L( 'w', { label: 'Diameter', unit: 'm', min: 0.02, max: 3, step: 0.01, def: 0.45 } ) : L( 'w', { label: 'Size W', unit: 'm', min: 0.05, max: 4, step: 0.01, def: 1 } ),
+			l.type === 'disc' ? null : L( 'h', { label: 'Size H', unit: 'm', min: 0.05, max: 4, step: 0.01, def: 1 } ), L( 'soft', { label: 'Softness', min: 0.02, max: 1, def: 0.5 } ), l.type === 'disc' ? null : L( 'roll', { label: 'Roll', unit: '°', min: - 90, max: 90, step: 1, dec: 0, def: 0 } ) ] ) );
 		b.append( sec( 'Colour & power', [ slider( { label: 'Power', unit: 'EV', min: - 3, max: 9, step: 0.05, dec: 2, def: Math.log2( 9 ), get: () => Math.log2( Math.max( l.intensity, 0.125 ) ), set: v => { l.intensity = Math.pow( 2, v ); up(); } } ),
 			L( 'K', { label: 'Temperature', unit: 'K', min: 2000, max: 12000, step: 50, dec: 0, def: 5600, cls: 'tempbar' } ), slider( { label: 'Tint', min: - 100, max: 100, step: 1, dec: 0, def: 0, cls: 'tintbar', get: () => l.tint * 100, set: v => { l.tint = v / 100; up(); } } ) ] ) );
 
@@ -286,6 +287,7 @@ function tabCamera( b ) {
 	b.append( sec( 'Lens', [ slider( { label: 'Focal length', unit: 'mm', min: 14, max: 200, step: 1, dec: 0, def: 70, get: () => C.focal, set: v => { C.focal = v; relens(); } } ),
 		chips( [ [ 24, '24' ], [ 35, '35' ], [ 50, '50' ], [ 85, '85' ], [ 135, '135' ] ], () => C.focal, v => { C.focal = v; relens(); renderRight(); } ) ] ) );
 	b.append( sec( 'Frame', [ chips( Object.keys( aspects ).map( k => [ k, k === 'free' ? 'Free' : k ] ), () => S.aspect, v => { S.aspect = v; ctx.E.resize(); } ),
+		slider( { label: 'Margin', unit: '%', min: 100, max: 250, step: 1, dec: 0, def: 125, get: () => ( C.margin || 1.25 ) * 100, set: v => { C.margin = v / 100; ctx.E.frame(); } } ),
 		h( 'div.split', btn( 'Auto-center & frame', () => { ctx.E.frame(); renderRight(); }, 'sm', 'frame' ), btn( 'Top view', () => { const c = ctx.E.bounds().getCenter( new ( ctx.E.camera.position.constructor )() ); ctx.E.setCamera( [ c.x, c.y + ctx.E.span * 3, c.z + 0.001 ], c.toArray() ); }, 'sm', 'camera' ) ) ] ) );
 	b.append( sec( 'Depth of field', [ chips( [ [ false, 'Off' ], [ true, 'On' ] ], () => C.dof, v => { C.dof = v; relens(); renderRight(); } ),
 		...( C.dof ? [ slider( { label: 'Aperture', unit: 'f/', min: 1.2, max: 22, step: 0.1, dec: 1, def: 5.6, get: () => C.fStop, set: v => { C.fStop = v; relens(); } } ),
@@ -333,17 +335,18 @@ function sizeFor( tier ) { const a = ctx.E.aspectValue || 1, l = tierPx[ tier ];
 function tabOutput( b ) {
 
 	const r = S.render, [ w, hh ] = sizeFor( r.tier );
+	b.append( sec( 'Hardware', [ row( 'Profile', sel( Object.entries( PROFILES ).map( ( [ k, p ] ) => [ k, p.name ] ), () => r.profile, v => { ctx.E.applyProfile( v ); ctx.onProfile(); renderRight(); } ) ), hint( 'Sets memory budget, texture cap, preview size and GPU load together. Integrated graphics is the default.' ) ] ) );
 	b.append( sec( 'Resolution', [ slider( { label: 'Size', min: 0, max: 4, step: 1, dec: 0, def: 1, get: () => r.tier, set: v => { r.tier = v; const [ ww, h2 ] = sizeFor( v ); lab.textContent = `${tierLabels[ v ]} · ${ww} × ${h2} px`; } } ),
 		h( 'div.hint', { style: { display: 'flex', justifyContent: 'space-between' } }, ...tierLabels.map( t => h( 'span', t ) ) ) ] ) );
 	const lab = h( 'div.kv', { id: 'sizeLab' }, `${tierLabels[ r.tier ]} · ${w} × ${hh} px` ); b.children[ b.children.length - 1 ].append( lab );
 	const tiled = Math.max( w, hh ) > 1024; b.append( h( 'div.hint', tiled ? 'Large sizes render in tiles and are stitched in system memory, so GPU use stays flat.' : 'Fits in one pass.' ) );
-	b.append( sec( 'Quality', [ slider( { label: 'Samples', min: 8, max: 1024, step: 8, dec: 0, def: 96, get: () => r.samples, set: v => { r.samples = v; ctx.E.target = v; } } ),
-		slider( { label: 'Bounces', min: 2, max: 12, step: 1, dec: 0, def: 6, get: () => r.bounces, set: v => { r.bounces = v; ctx.E.applyPTOptions(); ctx.E.resetPT(); } } ),
-		slider( { label: 'Denoise', min: 0, max: 1, def: 0.35, get: () => r.denoise, set: v => { r.denoise = v; } } ),
+	b.append( sec( 'Quality', [ slider( { label: 'Samples', min: 8, max: 1024, step: 8, dec: 0, def: 64, get: () => r.samples, set: v => { r.samples = v; ctx.E.target = v; } } ),
+		slider( { label: 'Bounces', min: 2, max: 12, step: 1, dec: 0, def: 5, get: () => r.bounces, set: v => { r.bounces = v; ctx.E.applyPTOptions(); ctx.E.resetPT(); } } ),
+		slider( { label: 'Denoise', min: 0, max: 1, def: 0.5, get: () => r.denoise, set: v => { r.denoise = v; } } ),
 		hint( 'Denoising keeps sample counts low. Raise it for fast drafts, lower it for crisp final detail.' ) ] ) );
 	b.append( sec( 'GPU load', [ chips( [ [ 'low', 'Gentle' ], [ 'balanced', 'Balanced' ], [ 'max', 'Full speed' ] ], () => r.gpuLoad, v => { r.gpuLoad = v; ctx.E.applyPTOptions(); } ),
 		row( 'Memory', sel( [ [ 1024, '1 GB' ], [ 2048, '2 GB' ], [ 4096, '4 GB' ], [ 8192, '8 GB' ] ], () => r.budgetMB, v => { r.budgetMB = + v; ctx.change( 'budget' ); } ) ),
-		row( 'Texture cap', sel( [ [ 512, '512 px' ], [ 1024, '1024 px' ], [ 2048, '2048 px' ], [ 4096, '4096 px' ] ], () => r.maxTex, v => { r.maxTex = + v; toast( 'Applies to textures loaded from now on' ); } ) ),
+		row( 'Texture cap', sel( [ [ 512, '512 px' ], [ 1024, '1024 px' ], [ 2048, '2048 px' ], [ 4096, '4096 px' ] ], () => r.maxTex, v => { r.maxTex = + v; ctx.E.applyTextureCap(); toast( 'Textures re-capped to ' + v + ' px' ); } ) ),
 		row( 'Live preview', sel( [ [ 0.5, 'Half res' ], [ 1, 'Full res' ] ], () => r.preview, v => { r.preview = + v; ctx.E.resize(); } ) ) ] ) );
 	b.append( sec( 'File', [ row( 'Format', sel( [ [ 'png', 'PNG' ], [ 'jpeg', 'JPEG' ], [ 'webp', 'WebP' ] ], () => r.format, v => { r.format = v; renderRight(); } ) ),
 		...( r.format !== 'png' ? [ slider( { label: 'Quality', min: 0.5, max: 1, step: 0.01, def: 0.92, get: () => r.quality, set: v => { r.quality = v; } } ) ] : [] ),
@@ -369,7 +372,8 @@ function tabPost( b ) {
 
 	const p = S.post, d = defaultPost(), P_ = ( k, label, r = {} ) => slider( Object.assign( { label, min: - 1, max: 1, step: 0.01, def: d[ k ], get: () => p[ k ], set: v => { p[ k ] = v; ctx.E.invalidate(); } }, r ) );
 	histCv = h( 'canvas.hist' ); b.append( histCv );
-	b.append( h( 'div.split', btn( 'Auto', () => { Object.assign( p, ctx.E.autoPost() ); renderRight(); }, 'sm primary', 'auto' ), btn( 'Reset', () => { const l = p.look, t = p.tone; Object.assign( p, defaultPost(), { look: l, tone: t } ); renderRight(); }, 'sm', 'reset' ) ) );
+	b.append( h( 'div.split', btn( 'Auto tone', () => { const a = ctx.E.autoPost(); if ( ! a ) { toast( 'Wait for the first samples, then try again' ); return; } Object.assign( p, a ); renderRight(); }, 'sm primary', 'auto' ), btn( 'Auto-center subject', () => { ctx.E.frame(); toast( 'Subject centred and framed' ); }, 'sm', 'frame' ) ) );
+	b.append( full( btn( 'Reset adjustments', () => { const l = p.look, t = p.tone; Object.assign( p, defaultPost(), { look: l, tone: t } ); renderRight(); }, 'sm', 'reset' ) ) );
 	b.append( sec( 'White balance', [ P_( 'temp', 'Temp', { min: - 100, max: 100, step: 1, dec: 0, cls: 'tempbar' } ), P_( 'tint', 'Tint', { min: - 100, max: 100, step: 1, dec: 0, cls: 'tintbar' } ) ] ) );
 	b.append( sec( 'Tone', [ P_( 'exposure', 'Exposure', { min: - 5, max: 5, step: 0.01 } ), P_( 'contrast', 'Contrast' ), P_( 'highlights', 'Highlights' ), P_( 'shadows', 'Shadows' ), P_( 'whites', 'Whites' ), P_( 'blacks', 'Blacks' ) ] ) );
 	b.append( sec( 'Presence', [ P_( 'vibrance', 'Vibrance' ), P_( 'saturation', 'Saturation' ), P_( 'sharpen', 'Sharpening', { min: 0, max: 1 } ) ] ) );

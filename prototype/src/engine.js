@@ -8,13 +8,13 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
 import { WebGLPathTracer, PhysicalCamera } from 'three-gpu-pathtracer';
-import { S, R, emit } from './state.js';
+import { S, R, emit, PROFILES } from './state.js';
 import { aspects, tierPx, clamp, deg, hexToLinear } from './util.js';
 import { bakeEnvironment, lightDir } from './envbake.js';
 import { buildStage } from './stage.js';
 import { PostFX, THREE_TONE } from './post.js';
 import { defaultPost } from './state.js';
-import { buildMaterial, projectUVs, patternTexture } from './materials.js';
+import { buildMaterial, projectUVs, patternTexture, capTextureInPlace } from './materials.js';
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -25,10 +25,10 @@ export class Engine {
 	constructor( canvas, container ) {
 
 		this.canvas = canvas; this.box = container;
-		this.renderer = new THREE.WebGLRenderer( { canvas, antialias: true, alpha: true, preserveDrawingBuffer: true, powerPreference: 'default', premultipliedAlpha: true } );
+		this.renderer = new THREE.WebGLRenderer( { canvas, antialias: false, alpha: true, preserveDrawingBuffer: true, powerPreference: 'default', premultipliedAlpha: true } );
 		this.renderer.shadowMap.enabled = true; this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 		this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-		this.dpr = Math.min( window.devicePixelRatio || 1, 1.5 );
+		this.dpr = Math.min( window.devicePixelRatio || 1, PROFILES[ S.render.profile ]?.dpr || 1 );
 		RectAreaLightUniformsLib.init();
 
 		this.scene = new THREE.Scene(); this.helpers = new THREE.Scene();
@@ -53,7 +53,7 @@ export class Engine {
 
 		this.post = new PostFX( this.renderer );
 		this.pt = new WebGLPathTracer( this.renderer );
-		this.pt.renderDelay = 0; this.pt.renderToCanvas = false; this.pt.rasterizeScene = false; this.pt.textureSize.set( 1024, 1024 ); this.pt.minSamples = 0; this.pt.fadeDuration = 0;
+		this.pt.renderDelay = 0; this.pt.renderToCanvas = false; this.pt.rasterizeScene = false; this.pt.textureSize.set( PROFILES[ S.render.profile ]?.ptTex || 512, PROFILES[ S.render.profile ]?.ptTex || 512 ); this.pt.minSamples = 0; this.pt.fadeDuration = 0;
 		this.pt.filterGlossyFactor = 0.5; this.pt.multipleImportanceSampling = true; this.pt.transmissiveBounces = 6;
 		this.ptReady = false; this.ptDirty = { geo: true, mat: true, env: true, cam: true };
 		this.ptBusy = false; this.paused = false; this.target = 96;
@@ -113,7 +113,7 @@ export class Engine {
 
 	buildComposer() {
 
-		const rt = new THREE.WebGLRenderTarget( 64, 64, { type: THREE.HalfFloatType, samples: 4 } );
+		const rt = new THREE.WebGLRenderTarget( 64, 64, { type: THREE.HalfFloatType, samples: PROFILES[ S.render.profile ]?.aa ? 4 : 0 } );
 		this.composer = new EffectComposer( this.renderer, rt );
 		this.rp = new RenderPass( this.scene, this.camera );
 		this.gtao = new GTAOPass( this.scene, this.camera, 64, 64 );
@@ -121,6 +121,33 @@ export class Engine {
 		try { this.gtao.updateGtaoMaterial( { radius: 0.08, distanceExponent: 1.5, thickness: 1, scale: 1.1, samples: 12, distanceFallOff: 1, screenSpaceRadius: false } ); this.gtao.blendIntensity = 1; } catch { /* defaults */ }
 		this.outPass = new OutputPass();
 		this.composer.addPass( this.rp ); this.composer.addPass( this.gtao ); this.composer.addPass( this.outPass );
+
+	}
+
+	/** Apply a hardware profile (integrated / discrete / high-end): budgets, quality defaults and buffer sizes. */
+	applyProfile( key ) {
+
+		const p = PROFILES[ key ]; if ( ! p ) return;
+		Object.assign( S.render, { profile: key, budgetMB: p.budgetMB, maxTex: p.maxTex, gpuLoad: p.gpuLoad, preview: p.preview, samples: p.samples, denoise: p.denoise } );
+		R.ao = p.ao; this.dpr = Math.min( window.devicePixelRatio || 1, p.dpr );
+		this.pt.textureSize.set( p.ptTex, p.ptTex );
+		for ( const rt of [ this.composer.renderTarget1, this.composer.renderTarget2 ] ) { rt.samples = p.aa ? 4 : 0; rt.dispose(); }
+		if ( this.sun ) { this.sun.shadow.mapSize.set( p.shadow, p.shadow ); this.sun.shadow.map?.dispose(); this.sun.shadow.map = null; }
+		this.applyTextureCap(); this.applyPTOptions(); this.ptDirty.mat = true; this.resize();
+
+	}
+
+	/** Re-cap every texture to the current limit (imported maps shrink in place, image wraps rebuild). */
+	applyTextureCap() {
+
+		const cap = S.render.maxTex;
+		this.meshes().forEach( m => {
+
+			for ( const k of [ 'map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap' ] ) { const t = m.material[ k ]; if ( t && ! m.userData.spec?.image && t.image && ! t.image.data ) capTextureInPlace( t, cap ); }
+			if ( m.userData.spec?.image ) this.applySpec( m );
+
+		} );
+		this.ptDirty.mat = true; this.invalidate();
 
 	}
 
@@ -214,7 +241,7 @@ export class Engine {
 		for ( const f of st.floors ) { const o = new THREE.Mesh( f.geometry, shadowMat ); o.position.copy( f.position ); o.rotation.copy( f.rotation ); o.receiveShadow = true; o.userData.rasterOnly = true; this.shadowProxy.add( o ); }
 		this.sun = this.sun || new THREE.DirectionalLight( 0xffffff, 0 ); this.sun.castShadow = true;
 		this.scene.add( this.sun ); this.scene.add( this.sun.target );
-		this.sun.shadow.mapSize.set( 1024, 1024 ); this.sun.shadow.radius = 6; this.sun.shadow.bias = - 0.0004;
+		this.sun.shadow.mapSize.set( PROFILES[ S.render.profile ]?.shadow || 1024, PROFILES[ S.render.profile ]?.shadow || 1024 ); this.sun.shadow.radius = 6; this.sun.shadow.bias = - 0.0004;
 		this.sun.userData.noPT = true;
 		this.updateShadowProxy();
 		this.grid.position.y = this.floorY + 0.0005; this.grid.scale.setScalar( Math.max( 0.5, this.span * 4 ) / 2 );
@@ -343,7 +370,7 @@ export class Engine {
 
 	}
 
-	frame( padding = 1.25 ) {
+	frame( padding = S.camera.margin || 1.25 ) {
 
 		const b = this.bounds(), c = b.getCenter( new THREE.Vector3() ), sz = b.getSize( new THREE.Vector3() );
 		const r = sz.length() / 2 * padding;
@@ -352,6 +379,17 @@ export class Engine {
 		const dir = this.camera.position.clone().sub( this.controls.target ).normalize();
 		this.setCamera( c.clone().add( dir.multiplyScalar( dist ) ).toArray(), c.toArray() );
 		S.camera.focusDist = + dist.toFixed( 3 ); this.applyLens(); this.ptDirty.cam = true;
+
+	}
+
+	/** Pull the camera back until the model and every light helper are inside the frame. */
+	frameLights() {
+
+		const b = this.bounds(); this.lightHelpers.children.forEach( l => b.expandByObject( l ) );
+		const c = b.getCenter( new THREE.Vector3() ), r = b.getSize( new THREE.Vector3() ).length() / 2 * 1.15;
+		const vf = this.camera.fov * deg, hf = 2 * Math.atan( Math.tan( vf / 2 ) * this.camera.aspect );
+		const dir = this.camera.position.clone().sub( this.controls.target ).normalize();
+		this.setCamera( c.clone().add( dir.multiplyScalar( r / Math.sin( Math.min( vf, hf ) / 2 ) ) ).toArray(), c.toArray() );
 
 	}
 
@@ -492,7 +530,7 @@ export class Engine {
 
 	}
 
-	autoPost() { return this.post.auto( this.pt.target.texture, S.post ); }
+	autoPost() { return this.ptReady && this.pt.samples >= 1 ? this.post.auto( this.pt.target.texture, S.post ) : null; }
 
 	// ---------------------------------------------------------------- memory estimate
 	memory() {

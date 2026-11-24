@@ -1,18 +1,24 @@
 import { uid, clone } from './util.js';
 
 /** Everything the user can set that must survive a save: plain JSON only. */
+export const PROFILES = {
+	integrated: { name: 'Integrated graphics', budgetMB: 1024, maxTex: 1024, gpuLoad: 'low', preview: 0.5, ao: false, aa: false, dpr: 1, ptTex: 512, samples: 64, denoise: 0.5, shadow: 1024 },
+	discrete: { name: 'Discrete GPU, 2 GB', budgetMB: 2048, maxTex: 2048, gpuLoad: 'balanced', preview: 1, ao: true, aa: true, dpr: 1.25, ptTex: 1024, samples: 96, denoise: 0.35, shadow: 2048 },
+	high: { name: 'High-end GPU', budgetMB: 8192, maxTex: 4096, gpuLoad: 'max', preview: 1, ao: true, aa: true, dpr: 2, ptTex: 2048, samples: 256, denoise: 0.2, shadow: 4096 },
+};
+
 export function defaultState() {
 
 	return {
 		aspect: '4:5',
 		view: 'prepare',
 		units: 'auto',
-		camera: { pos: [ 0.36, 0.26, 0.62 ], target: [ 0, 0.09, 0 ], focal: 70, dof: false, fStop: 5.6, focusDist: 0.7, bookmarks: [] },
+		camera: { pos: [ 0.36, 0.26, 0.62 ], target: [ 0, 0.09, 0 ], margin: 1.25, focal: 70, dof: false, fStop: 5.6, focusDist: 0.7, bookmarks: [] },
 		env: { base: 'studio', ambient: 0.25, ambientK: 6500, hdriIntensity: 1, rotation: 0 },
 		lights: lightPreset( 'hero' ),
 		stage: { kit: 'sweep', color: '#d8d4cd', color2: '#c9bba9', rough: 0.9, bg: 'match', bgColor: '#d8d4cd', ribs: false },
 		post: defaultPost(),
-		render: { tier: 1, samples: 96, bounces: 6, gpuLoad: 'balanced', denoise: 0.35, format: 'png', quality: 0.92, preview: 1, budgetMB: 2048, transparent: false, maxTex: 2048 },
+		render: { profile: 'integrated', tier: 1, samples: 64, bounces: 5, gpuLoad: 'low', denoise: 0.5, format: 'png', quality: 0.92, preview: 0.5, budgetMB: 1024, transparent: false, maxTex: 1024 },
 	};
 
 }
@@ -73,4 +79,4 @@ export function replaceState( next ) {
 }
 
 /** Non-serialised runtime state. */
-export const R = { mode: 'prepare', sel: { model: null, part: null }, gizmo: 'translate', gizmoTarget: 'model', selLight: null, models: [], envBase: null, ao: true, grid: true, hudTri: 0 };
+export const R = { mode: 'prepare', sel: { model: null, part: null }, gizmo: 'translate', gizmoTarget: 'model', selLight: null, models: [], envBase: null, ao: false, grid: true, hudTri: 0 };
