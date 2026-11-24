@@ -65,11 +65,53 @@ export class Engine {
 		this.stats = { tris: 0, fps: 0 };
 		this.mode = 'prepare';
 		this.ray = { down: null };
+		this.detectCaps(); this.watchContext();
 		this.setupPicking();
 		this.buildComposer();
 		this.resize();
 		new ResizeObserver( () => this.resize() ).observe( container );
 		this.loop = this.loop.bind( this ); requestAnimationFrame( this.loop );
+
+	}
+
+	// ---------------------------------------------------------------- GPU capabilities, context loss, diagnostics
+	detectCaps() {
+
+		const r = this.renderer, gl = r.getContext(), dbg = gl.getExtension( 'WEBGL_debug_renderer_info' );
+		this.caps = {
+			gpu: dbg ? gl.getParameter( dbg.UNMASKED_RENDERER_WEBGL ) : 'unknown', maxTex: gl.getParameter( gl.MAX_TEXTURE_SIZE ), maxRB: gl.getParameter( gl.MAX_RENDERBUFFER_SIZE ),
+			floatRT: !! gl.getExtension( 'EXT_color_buffer_float' ), floatBlend: !! gl.getExtension( 'EXT_float_blend' ), floatLinear: !! gl.getExtension( 'OES_texture_float_linear' ),
+			maxSamples: gl.getParameter( gl.MAX_SAMPLES ), webgl2: r.capabilities.isWebGL2,
+		};
+		this.diag = { resets: 0, lastTile: 0, retries: 0, errors: 0, lastError: '' };
+		this.ptFailed = this.caps.floatRT ? '' : 'This GPU or browser does not expose float render targets, so path tracing is unavailable. The raster renderer is used instead.';
+		r.debug.onShaderError = ( g, program, vs, fs ) => { this.diag.lastError = 'shader compile failed'; if ( fs.length > 20000 && ! this.ptFailed ) this.ptFailed = 'The path-tracing shader could not be compiled on this GPU. The raster renderer is used instead.'; };
+
+	}
+
+	watchContext() {
+
+		this.canvas.addEventListener( 'webglcontextlost', e => { e.preventDefault(); this.lost = true; this.diag.resets ++; emit( 'gl-lost' ); } );
+		this.canvas.addEventListener( 'webglcontextrestored', () => {
+
+			this.lost = false; this.envKey = ''; this.ptReady = false; this.ptDirty = { geo: true, mat: true, env: true, cam: true };
+			try { this.detectCaps(); this.updateEnvironment( true ); this.resize(); } catch ( e ) { console.warn( e ); }
+			this.invalidate(); emit( 'gl-restored' );
+
+		} );
+
+	}
+
+	waitForContext( ms = 20000 ) {
+
+		return new Promise( ( res, rej ) => { const t0 = performance.now(); const tick = () => { if ( ! this.lost && ! this.renderer.getContext().isContextLost() ) res(); else if ( performance.now() - t0 > ms ) rej( new Error( 'The graphics context was reset and did not recover' ) ); else setTimeout( tick, 100 ); }; tick(); } );
+
+	}
+
+	diagnostics() {
+
+		const c = this.caps, d = this.diag;
+		return [ `GPU: ${c.gpu}`, `WebGL2: ${c.webgl2}  max texture: ${c.maxTex}  max renderbuffer: ${c.maxRB}`, `float render targets: ${c.floatRT}  float blend: ${c.floatBlend}  float linear: ${c.floatLinear}`, `last tile size: ${d.lastTile}  render retries: ${d.retries}  context resets: ${d.resets}`, `profile: ${S.render.profile}  path tracer: ${this.ptFailed ? 'unavailable (' + this.ptFailed + ')' : 'ok'}` ].join( '\n' );
 
 	}
 
@@ -128,7 +170,7 @@ export class Engine {
 	applyProfile( key ) {
 
 		const p = PROFILES[ key ]; if ( ! p ) return;
-		Object.assign( S.render, { profile: key, budgetMB: p.budgetMB, maxTex: p.maxTex, gpuLoad: p.gpuLoad, preview: p.preview, samples: p.samples, denoise: p.denoise } );
+		Object.assign( S.render, { profile: key, maxTex: p.maxTex, gpuLoad: p.gpuLoad, preview: p.preview, samples: p.samples, denoise: p.denoise } );
 		R.ao = p.ao; this.dpr = Math.min( window.devicePixelRatio || 1, p.dpr );
 		this.pt.textureSize.set( p.ptTex, p.ptTex );
 		for ( const rt of [ this.composer.renderTarget1, this.composer.renderTarget2 ] ) { rt.samples = p.aa ? 4 : 0; rt.dispose(); }
@@ -485,6 +527,20 @@ export class Engine {
 	loop( t ) {
 
 		requestAnimationFrame( this.loop );
+		if ( this.lost ) return;
+		try { this.tick(); this.errRun = 0; } catch ( e ) {
+
+			this.diag.errors ++; this.diag.lastError = String( e.message || e ); this.errRun = ( this.errRun || 0 ) + 1;
+			if ( this.errRun === 1 ) console.warn( 'Hyper frame error', e );
+			if ( this.errRun >= 4 && this.mode === 'render' && ! this.ptFailed ) { this.ptFailed = 'The path tracer stopped after repeated errors (' + this.diag.lastError.slice( 0, 80 ) + '). The raster renderer is used instead.'; emit( 'engine-error', this.ptFailed ); }
+			if ( this.errRun >= 4 && this.mode === 'prepare' && R.ao ) { R.ao = false; emit( 'engine-error', 'Ambient occlusion was turned off after a graphics error.' ); }
+
+		}
+
+	}
+
+	tick() {
+
 		this.controls.update();
 		const now = performance.now();
 		if ( this.fpsT === undefined ) { this.fpsT = now; this.fpsN = 0; }
@@ -503,13 +559,29 @@ export class Engine {
 		// render mode
 		if ( this.geoDirty ) { this.geoDirty = false; this.ptDirty.geo = true; }
 		if ( this.camDirty ) { this.camDirty = false; this.ptDirty.cam = true; this.lastMove = now; this.showRasterUntil = now + 220; }
+		if ( this.ptFailed ) { if ( this.dirty || this.fpsN % 30 === 0 ) { this.dirty = false; this.renderRasterBare(); } return; }
 		if ( now < ( this.showRasterUntil || 0 ) ) { this.renderRasterBare(); this.dirty = false; return; }
 		if ( this.ptDirty.geo || this.ptDirty.mat || this.ptDirty.env || this.ptDirty.cam || ! this.ptReady ) { const rebuilt = this.syncPT(); if ( rebuilt ) { this.renderRasterBare(); return; } }
 		const pt = this.pt;
-		if ( ! this.paused && pt.samples < this.target && ! pt.isCompiling ) { pt.pausePathTracing = false; } else pt.pausePathTracing = true;
+		const running = ! this.paused && pt.samples < this.target && ! pt.isCompiling;
+		pt.pausePathTracing = ! running;
+		const t0 = performance.now();
 		pt.renderSample();
 		this.displayPT();
-		this.maybeStats();
+		this.governLive( performance.now() - now, running );
+
+	}
+
+	/** Live preview pacing: if frames get slow, split each sample into more tiles; relax again when there is headroom. */
+	governLive( ms, running ) {
+
+		if ( ! running ) return;
+		this.liveEma = this.liveEma ? this.liveEma * 0.85 + ms * 0.15 : ms;
+		const pt = this.pt, n = pt.tiles.x, atBoundary = Math.abs( pt.samples - Math.round( pt.samples ) ) < 1e-6;
+		if ( ! atBoundary ) return;
+		const base = { low: 4, balanced: 2, max: 1 }[ S.render.gpuLoad ] || 2;
+		if ( this.liveEma > 70 && n < 10 ) { pt.tiles.set( n + 1, n + 1 ); this.liveEma = 0; }
+		else if ( this.liveEma < 10 && n > base ) { this.calm = ( this.calm || 0 ) + 1; if ( this.calm > 90 ) { pt.tiles.set( n - 1, n - 1 ); this.calm = 0; } } else this.calm = 0;
 
 	}
 
@@ -564,63 +636,152 @@ export class Engine {
 
 	}
 
-	// ---------------------------------------------------------------- final-quality export (tiled, host-RAM stitched)
+	// ---------------------------------------------------------------- final-quality export
+	/** Largest tile edge the GPU can safely allocate (not tied to any memory budget; retries shrink it if the driver refuses). */
+	pickTile( W, H ) {
+
+		const m = 16, cap = Math.min( 2048, this.caps.maxTex, this.caps.maxRB );
+		if ( S.render.tile ) return S.render.tile;
+		if ( W <= cap && H <= cap ) return Math.max( W, H );
+		return Math.floor( ( cap - m * 2 ) / 64 ) * 64;
+
+	}
+
 	/**
-	 * Render the current scene at tier resolution. Tiles keep GPU memory bounded; each finished tile is
-	 * graded and copied into a 2D canvas that lives in system RAM.
+	 * Render the current scene at tier resolution. Tiles keep GPU use flat; every tile is graded and copied into a
+	 * 2D canvas in system RAM. The engine paces the GPU, recovers from context loss, and retries with smaller tiles
+	 * and safer settings before giving up. Resolves { canvas, notes, suspect, tile }.
 	 */
-	async renderFinal( { tier, samples, onProgress, shouldCancel } ) {
+	async renderFinal( opts ) {
 
-		const long = tierPx[ tier ], a = this.aspectValue || 1;
+		const long = tierPx[ opts.tier ], a = this.aspectValue || 1;
 		const W = a >= 1 ? long : Math.round( long * a ), H = a >= 1 ? Math.round( long / a ) : long;
-		const budget = S.render.budgetMB, T = S.render.tile || ( budget <= 1024 ? 768 : budget <= 2048 ? 1024 : 1536 );
-		const margin = ( W <= T && H <= T ) ? 0 : 16;
-		const out = document.createElement( 'canvas' ); out.width = W; out.height = H;
-		const ctx = out.getContext( '2d', { willReadFrequently: false, alpha: true } );
-		const r = this.renderer, cam = this.camera, pt = this.pt;
-		const saved = { pr: r.getPixelRatio(), size: r.getSize( new THREE.Vector2() ) };
-		this.exporting = true; this.applyPTOptions();
-		const tx = Math.ceil( W / T ), ty = Math.ceil( H / T ), total = tx * ty;
-		const transparent = S.stage.bg === 'transparent' || S.render.transparent;
-		let done = 0;
-		try {
+		const notes = []; let T = this.pickTile( W, H ), safe = false;
+		for ( let attempt = 0; ; attempt ++ ) {
 
-			this.applyLens(); this.scene.updateMatrixWorld( true ); this.vis( 'pt' );
-			pt.setScene( this.scene, cam ); this.ptReady = true;
-			for ( let j = 0; j < ty; j ++ ) for ( let i = 0; i < tx; i ++ ) {
+			try {
 
-				const x = i * T, y = j * T, tw = Math.min( T, W - x ), th = Math.min( T, H - y );
-				const x0 = x - margin, y0 = y - margin, bw = tw + margin * 2, bh = th + margin * 2;
-				r.setPixelRatio( 1 ); r.setSize( bw, bh, false );
-				cam.setViewOffset( W, H, x0, y0, bw, bh ); cam.updateProjectionMatrix(); cam.updateMatrixWorld();
-				pt.pausePathTracing = false; pt.updateCamera();
-				while ( pt.isCompiling ) { onProgress?.( { done, total, tile: 0, status: 'Compiling shaders…' } ); await new Promise( q => setTimeout( q, 60 ) ); if ( shouldCancel?.() ) throw new Error( 'cancelled' ); }
-				let n = 0;
-				while ( pt.samples < samples ) {
+				const res = this.ptFailed ? await this.renderFinalRaster( opts, W, H, T ) : await this.renderFinalOnce( opts, W, H, T, safe );
+				if ( res.blank && attempt < 1 && ! this.ptFailed ) { notes.push( 'The first pass came out blank, so it was re-rendered with safer settings.' ); safe = true; T = Math.max( 256, Math.floor( T / 2 / 64 ) * 64 ); this.diag.retries ++; continue; }
+				return { canvas: res.canvas, notes, suspect: res.blank, tile: T, W, H, raster: !! this.ptFailed };
 
-					pt.renderSample(); n ++;
-					if ( n % 2 === 0 ) { onProgress?.( { done, total, tile: Math.min( 1, pt.samples / samples ), samples: pt.samples } ); await new Promise( q => setTimeout( q, 0 ) ); }
-					if ( shouldCancel?.() ) throw new Error( 'cancelled' );
+			} catch ( e ) {
 
-				}
-
-				this.post.setParams( S.post, { alpha: transparent, sample: 1 } );
-				const map = this.post.denoise( pt.target.texture, pt.target.width, pt.target.height, transparent ? 0 : S.render.denoise );
-				r.toneMapping = THREE.NoToneMapping; r.setRenderTarget( null ); r.setClearColor( 0, 0 ); r.clear();
-				this.post.draw( map, { w: bw, h: bh, full: [ W, H ], origin: [ x0, H - y0 - bh ], grainScale: Math.max( 1, H / 1080 ) }, null );
-				ctx.drawImage( this.canvas, margin, margin, tw, th, x, y, tw, th );
-				done ++; onProgress?.( { done, total, tile: 0 } );
+				if ( e.message === 'cancelled' ) throw e;
+				if ( attempt >= 3 ) throw new Error( 'Rendering failed after several attempts: ' + ( e.message || e ) + '. Try a smaller size or fewer samples.' );
+				this.diag.retries ++; this.diag.lastError = String( e.message || e );
+				notes.push( `Attempt ${attempt + 1} failed (${String( e.message || e ).slice( 0, 70 )}); retrying with smaller tiles.` );
+				T = Math.max( 256, Math.floor( T / 2 / 64 ) * 64 ); safe = attempt >= 1;
+				try { await this.waitForContext(); } catch ( err ) { throw err; }
 
 			}
 
-		} finally {
-
-			cam.clearViewOffset(); r.setPixelRatio( saved.pr ); r.setSize( saved.size.x, saved.size.y, false );
-			this.exporting = false; this.vis( this.mode === 'prepare' ? 'raster' : 'bare' ); this.applyLens(); this.ptDirty = { geo: true, mat: true, env: true, cam: true }; this.resize();
-
 		}
 
-		return out;
+	}
+
+	async yieldFrame() { await new Promise( r => { const c = new MessageChannel(); c.port1.onmessage = () => r(); c.port2.postMessage( 0 ); } ); }
+
+	async renderFinalOnce( { samples, onProgress, shouldCancel }, W, H, T, safe ) {
+
+		const single = W <= T && H <= T, m = single ? 0 : 16;
+		const bw = single ? W : T + m * 2, bh = single ? H : T + m * 2;
+		const out = document.createElement( 'canvas' ); out.width = W; out.height = H;
+		const ctx = out.getContext( '2d', { alpha: true } );
+		if ( ! ctx ) throw new Error( `This browser cannot allocate a ${W} × ${H} image` );
+		const r = this.renderer, gl = r.getContext(), cam = this.camera, pt = this.pt;
+		const saved = { pr: r.getPixelRatio(), size: r.getSize( new THREE.Vector2() ), denoise: S.render.denoise };
+		const transparent = S.stage.bg === 'transparent' || S.render.transparent;
+		const tx = single ? 1 : Math.ceil( W / T ), ty = single ? 1 : Math.ceil( H / T ), total = tx * ty;
+		this.exporting = true; this.applyPTOptions(); this.diag.lastTile = single ? Math.max( W, H ) : T;
+		if ( safe ) { S.render.denoise = 0; pt.tiles.set( 6, 6 ); }
+		let done = 0, ema = 0, lastYield = performance.now();
+		try {
+
+			this.applyLens(); this.scene.updateMatrixWorld( true ); this.vis( 'pt' );
+			r.setPixelRatio( 1 ); r.setSize( bw, bh, false );
+			pt.setScene( this.scene, cam ); this.ptReady = true; pt.pausePathTracing = false;
+			for ( let j = 0; j < ty; j ++ ) for ( let i = 0; i < tx; i ++ ) {
+
+				const x = i * T, y = j * T, tw = single ? W : Math.min( T, W - x ), th = single ? H : Math.min( T, H - y );
+				cam.setViewOffset( W, H, x - m, y - m, bw, bh ); cam.updateProjectionMatrix(); cam.updateMatrixWorld();
+				pt.updateCamera();
+				let guard = 0;
+				while ( pt.isCompiling ) { onProgress?.( { done, total, tile: 0, status: 'Compiling shaders…' } ); await this.yieldFrame(); await new Promise( q => setTimeout( q, 50 ) ); if ( shouldCancel?.() ) throw new Error( 'cancelled' ); if ( ++ guard > 4000 ) throw new Error( 'shader compile timed out' ); }
+				while ( pt.samples < samples ) {
+
+					if ( this.lost || gl.isContextLost() ) throw new Error( 'graphics context lost' );
+					const t0 = performance.now(); pt.renderSample(); gl.finish(); const dt = performance.now() - t0;
+					ema = ema ? ema * 0.7 + dt * 0.3 : dt;
+					const nt = pt.tiles.x;
+					if ( Math.abs( pt.samples - Math.round( pt.samples ) ) < 1e-6 ) { if ( ema > 120 && nt < 12 ) { pt.tiles.set( nt + 1, nt + 1 ); ema = 0; } }
+					if ( performance.now() - lastYield > 30 ) { onProgress?.( { done, total, tile: Math.min( 1, pt.samples / samples ), samples: pt.samples } ); await this.yieldFrame(); lastYield = performance.now(); if ( shouldCancel?.() ) throw new Error( 'cancelled' ); }
+
+				}
+
+				const err = gl.getError(); if ( err === 0x0505 ) throw new Error( 'the GPU ran out of memory' );
+				this.post.setParams( S.post, { alpha: transparent, sample: 1 } );
+				const map = this.post.denoise( pt.target.texture, pt.target.width, pt.target.height, transparent ? 0 : S.render.denoise );
+				r.toneMapping = THREE.NoToneMapping; r.setRenderTarget( null ); r.setClearColor( 0, 0 ); r.clear();
+				this.post.draw( map, { w: bw, h: bh, full: [ W, H ], origin: [ x - m, H - ( y - m ) - bh ], grainScale: Math.max( 1, H / 1080 ) }, null );
+				gl.finish();
+				ctx.drawImage( this.canvas, m, m, tw, th, x, y, tw, th );
+				done ++; onProgress?.( { done, total, tile: 0 } ); await this.yieldFrame();
+
+			}
+
+			return { canvas: out, blank: ! transparent && this.looksBlank( out ) };
+
+		} finally { this.endExport( saved ); }
+
+	}
+
+	/** Fallback when the path tracer cannot run: render with the raster pipeline, tile by tile. */
+	async renderFinalRaster( { onProgress, shouldCancel }, W, H, T ) {
+
+		const single = W <= T && H <= T, m = single ? 0 : 16, bw = single ? W : T + m * 2, bh = single ? H : T + m * 2;
+		const out = document.createElement( 'canvas' ); out.width = W; out.height = H; const ctx = out.getContext( '2d' );
+		if ( ! ctx ) throw new Error( `This browser cannot allocate a ${W} × ${H} image` );
+		const r = this.renderer, cam = this.camera, saved = { pr: r.getPixelRatio(), size: r.getSize( new THREE.Vector2() ), denoise: S.render.denoise };
+		const tx = single ? 1 : Math.ceil( W / T ), ty = single ? 1 : Math.ceil( H / T ); let done = 0;
+		this.exporting = true;
+		try {
+
+			this.applyLens(); this.vis( 'bare' ); r.setPixelRatio( 1 ); r.setSize( bw, bh, false ); this.composer.setPixelRatio( 1 ); this.composer.setSize( bw, bh ); this.gtao.enabled = true;
+			for ( let j = 0; j < ty; j ++ ) for ( let i = 0; i < tx; i ++ ) {
+
+				const x = i * T, y = j * T, tw = single ? W : Math.min( T, W - x ), th = single ? H : Math.min( T, H - y );
+				cam.setViewOffset( W, H, x - m, y - m, bw, bh ); cam.updateProjectionMatrix();
+				this.rasterTone(); this.vis( 'raster' ); this.composer.render(); r.getContext().finish();
+				ctx.drawImage( this.canvas, m, m, tw, th, x, y, tw, th );
+				done ++; onProgress?.( { done, total: tx * ty, tile: 0, status: 'Rendering with the raster engine' } ); if ( shouldCancel?.() ) throw new Error( 'cancelled' ); await this.yieldFrame();
+
+			}
+
+			return { canvas: out, blank: false };
+
+		} finally { this.endExport( saved ); this.composer.setPixelRatio( this.renderer.getPixelRatio() ); }
+
+	}
+
+	endExport( saved ) {
+
+		const r = this.renderer;
+		this.camera.clearViewOffset(); S.render.denoise = saved.denoise;
+		try { r.setPixelRatio( saved.pr ); r.setSize( saved.size.x, saved.size.y, false ); } catch ( e ) { console.warn( e ); }
+		this.exporting = false; this.vis( this.mode === 'prepare' ? 'raster' : 'bare' ); this.applyLens();
+		this.ptDirty = { geo: true, mat: true, env: true, cam: true }; this.applyPTOptions(); this.resize();
+
+	}
+
+	/** True when the finished image is one flat near-white or near-black colour (a typical symptom of a GPU numeric failure). */
+	looksBlank( cv ) {
+
+		const k = document.createElement( 'canvas' ); k.width = k.height = 48; const g = k.getContext( '2d' ); g.drawImage( cv, 0, 0, 48, 48 );
+		const d = g.getImageData( 0, 0, 48, 48 ).data; let sum = 0, sq = 0, n = 0;
+		for ( let i = 0; i < d.length; i += 4 ) { const l = ( d[ i ] + d[ i + 1 ] + d[ i + 2 ] ) / 3; sum += l; sq += l * l; n ++; }
+		const mean = sum / n, varc = sq / n - mean * mean;
+		return varc < 0.6 && ( mean > 251 || mean < 3 );
 
 	}
 

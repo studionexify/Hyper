@@ -42,22 +42,35 @@ function setBusy( on, text ) {
 
 let prog = { done: 0, total: 1, tile: 0, label: '', t0: 0 };
 
-async function renderFinalFlow( quiet ) {
+function onProg( p ) { prog = Object.assign( prog, p, { label: p.status || ( p.total > 1 ? `Rendering tile ${Math.min( p.total, p.done + 1 )} of ${p.total}` : 'Rendering' ) } ); }
 
-	if ( busy ) return null;
+/** Render at the chosen size. Resolves { blob, canvas, res } without saving; the viewer decides when to download. */
+async function renderToBlob() {
+
+	const res = await E.renderFinal( { tier: S.render.tier, samples: S.render.samples, shouldCancel: () => cancel, onProgress: onProg } );
+	const blob = await toBlob( res.canvas, S.render.format );
+	if ( ! blob ) throw new Error( 'The browser could not encode this image. Try a smaller size or another format.' );
+	return { blob, canvas: res.canvas, res };
+
+}
+
+async function renderFinalFlow() {
+
+	if ( busy ) return;
 	cancel = false; setBusy( true, 'Rendering' ); prog = { done: 0, total: 1, tile: 0, label: 'Rendering', t0: performance.now() };
 	try {
 
-		const cv = await E.renderFinal( { tier: S.render.tier, samples: S.render.samples, shouldCancel: () => cancel, onProgress: p => { prog = Object.assign( prog, p, { label: p.status || 'Rendering tile ' + Math.min( p.total, p.done + 1 ) + ' of ' + p.total } ); } } );
-		const blob = await toBlob( cv, S.render.format );
-		if ( quiet ) return blob;
+		const { blob, canvas, res } = await renderToBlob();
+		setBusy( false );
 		const name = `hyper-${slug( R.models[ 0 ]?.name || 'render' )}-${tierLabels[ S.render.tier ].toLowerCase()}.${ext[ S.render.format ]}`;
-		setBusy( false ); await saveFile( name, blob ); return blob;
+		const notes = [ ...res.notes ];
+		if ( res.raster ) notes.push( 'Path tracing was unavailable on this GPU, so this image was made with the raster engine.' );
+		if ( res.suspect ) notes.push( 'The image looks blank. Check the lights, backdrop and exposure before saving.' );
+		showResult( { title: res.suspect ? 'Render finished, check the image' : 'Render complete', canvas, info: `${res.W} × ${res.H} px  ·  ${S.render.format.toUpperCase()}  ·  ${fmtBytes( blob.size )}`, notes, saveLabel: 'Save image', onSave: () => saveFile( name, blob ) } );
 
 	} catch ( e ) {
 
-		if ( e.message !== 'cancelled' ) { console.error( e ); toast( 'Render failed: ' + e.message, 5000 ); } else toast( 'Render cancelled' );
-		return null;
+		if ( e.message === 'cancelled' ) toast( 'Render cancelled' ); else { console.warn( e ); toast( e.message || 'Render failed', 7000 ); }
 
 	} finally { setBusy( false ); }
 
@@ -68,17 +81,43 @@ async function renderBatchFlow() {
 	if ( busy ) return;
 	const all = await P.listScenes(), pick = all.filter( s => ctx.checked?.has( s.id ) );
 	if ( ! pick.length ) { toast( 'Tick the scenes you want to render first' ); return; }
-	const files = {}; cancel = false;
-	for ( let i = 0; i < pick.length; i ++ ) {
+	const files = {}; cancel = false; setBusy( true, 'Rendering' ); let first = null, total = 0;
+	try {
 
-		await loadScene( pick[ i ], true ); await new Promise( r => setTimeout( r, 250 ) );
-		toast( `Scene ${i + 1} of ${pick.length}: ${pick[ i ].name}`, 60000 );
-		const blob = await renderFinalFlow( true ); if ( ! blob ) return;
-		files[ `${String( i + 1 ).padStart( 2, '0' )}-${slug( pick[ i ].name )}.${ext[ S.render.format ]}` ] = new Uint8Array( await blob.arrayBuffer() );
+		for ( let i = 0; i < pick.length; i ++ ) {
 
-	}
+			await loadScene( pick[ i ], true ); await new Promise( r => setTimeout( r, 250 ) );
+			prog = { done: 0, total: 1, tile: 0, label: `Scene ${i + 1} of ${pick.length}: ${pick[ i ].name}`, t0: performance.now() };
+			const { blob, canvas } = await renderToBlob(); first ||= canvas; total += blob.size;
+			files[ `${String( i + 1 ).padStart( 2, '0' )}-${slug( pick[ i ].name )}.${ext[ S.render.format ]}` ] = new Uint8Array( await blob.arrayBuffer() );
 
-	await saveFile( 'hyper-renders.zip', new Blob( [ P.zipFiles( files ) ], { type: 'application/zip' } ) );
+		}
+
+		setBusy( false );
+		const zip = new Blob( [ P.zipFiles( files ) ], { type: 'application/zip' } );
+		showResult( { title: `${pick.length} render${pick.length === 1 ? '' : 's'} ready`, canvas: first, info: `${Object.keys( files ).join( ', ' )}  ·  ${fmtBytes( zip.size )}`, notes: [], saveLabel: 'Save ZIP', onSave: () => saveFile( 'hyper-renders.zip', zip ) } );
+
+	} catch ( e ) {
+
+		if ( e.message === 'cancelled' ) toast( 'Batch cancelled' ); else { console.warn( e ); toast( e.message || 'Batch failed', 7000 ); }
+
+	} finally { setBusy( false ); }
+
+}
+
+/** Result dialog: the finished image is shown first; nothing is downloaded until the viewer presses Save. */
+function showResult( { title, canvas, info, notes, saveLabel, onSave } ) {
+
+	document.getElementById( 'result' )?.remove();
+	const pv = document.createElement( 'canvas' ), k = Math.min( 1, 1000 / Math.max( canvas.width, canvas.height ) );
+	pv.width = Math.max( 1, Math.round( canvas.width * k ) ); pv.height = Math.max( 1, Math.round( canvas.height * k ) ); pv.getContext( '2d' ).drawImage( canvas, 0, 0, pv.width, pv.height );
+	const close = () => dlg.remove();
+	const save = h( 'button.btn.primary', { type: 'button', onclick: async () => { save.disabled = true; try { await onSave(); } finally { save.disabled = false; } } }, ic( 'download' ), saveLabel );
+	const dlg = h( 'div#result', { role: 'dialog', 'aria-modal': 'true', 'aria-label': title, onclick: e => { if ( e.target === dlg ) close(); } },
+		h( 'div.panel', h( 'div.rh', h( 'b', title ), h( 'button.btn.ghost.icon', { type: 'button', 'aria-label': 'Close', onclick: close }, ic( 'x' ) ) ),
+			h( 'div.rv', pv ), h( 'div.ri.num', info ), ...( notes || [] ).map( n => h( 'div.rn', n ) ),
+			h( 'div.ra', h( 'button.btn', { type: 'button', onclick: close }, 'Keep editing' ), save ) ) );
+	document.body.append( dlg ); save.focus();
 
 }
 
@@ -140,19 +179,22 @@ function buildToolbar() {
 // ---------------------------------------------------------------- status + memory
 function updateStatus() {
 
-	const sb = $( '#statusbar' ), m = E.memory(), budget = S.render.budgetMB * 1048576;
-	const pct = ( v ) => clamp( v / budget * 100, 0, 100 ).toFixed( 1 ) + '%';
+	const sb = $( '#statusbar' ), m = E.memory(), total = Math.max( m.total, 1 );
+	const pct = ( v ) => ( v / total * 100 ).toFixed( 1 ) + '%';
 	const mem = $( '#mem' ); mem.replaceChildren(
 		h( 'span.lbl', 'GPU memory' ),
 		h( 'div.bar', { title: `Geometry ${fmtBytes( m.geometry )} · Textures ${fmtBytes( m.textures )} · Buffers ${fmtBytes( m.targets )} · BVH ${fmtBytes( m.bvh )}` },
 			h( 'i', { style: { width: pct( m.geometry ), background: 'var(--accent)' } } ), h( 'i', { style: { width: pct( m.textures ), background: '#e8a35a' } } ), h( 'i', { style: { width: pct( m.targets ), background: '#6aa3ff' } } ), h( 'i', { style: { width: pct( m.bvh ), background: '#9b8cff' } } ) ),
-		h( 'span', h( 'b.num', fmtBytes( m.total ) ), ' / ', ( S.render.budgetMB / 1024 ) + ' GB' ) );
-	mem.style.color = m.total > budget * 0.85 ? 'var(--warn)' : '';
+		h( 'span', h( 'b.num', '≈ ' + fmtBytes( m.total ) ) ) );
 	const items = [];
 	if ( sb.dataset.busy ) {
 
 		const f = ( prog.done + prog.tile ) / prog.total, el = ( performance.now() - prog.t0 ) / 1000;
 		items.push( h( 'span', h( 'b', prog.label ) ), h( 'div.prog', h( 'i', { style: { width: ( f * 100 ).toFixed( 1 ) + '%' } } ) ), h( 'span.num', Math.round( f * 100 ) + '%  ·  ' + el.toFixed( 0 ) + ' s' ), h( 'span.grow' ), btn( 'Cancel', () => { cancel = true; } ) );
+
+	} else if ( R.mode === 'render' && E.ptFailed ) {
+
+		items.push( h( 'span', { style: { color: 'var(--warn)' } }, E.ptFailed ), h( 'span.grow' ), h( 'span.num', E.stats.fps + ' fps' ) );
 
 	} else if ( R.mode === 'render' ) {
 
@@ -205,6 +247,10 @@ function boot() {
 	on( 'pick-light', e => { R.selLight = e.detail; ctx.tab.prepare = 'lights'; E.refreshLightHelpers(); UI.renderRight(); E.invalidate(); } );
 	let tt; on( 'transform', () => { clearTimeout( tt ); tt = setTimeout( () => { if ( ctx.tab.prepare === 'transform' ) UI.renderRight(); E.updateEnvironment( true ); }, 50 ); } );
 	on( 'restored', () => { buildToolbar(); } );
+	on( 'gl-lost', () => { $( '#vpOver' ).innerHTML = '<div class="overlay-msg show"><div>The browser reset the graphics device.<br>Recovering, nothing is lost…</div></div>'; } );
+	on( 'gl-restored', () => { $( '#vpOver' ).replaceChildren(); toast( 'Graphics recovered' ); UI.renderRight(); } );
+	on( 'engine-error', e => { toast( e.detail, 6000 ); UI.renderRight(); buildToolbar(); } );
+	addEventListener( 'error', e => { console.warn( e.error || e.message ); } ); addEventListener( 'unhandledrejection', e => { console.warn( e.reason ); e.preventDefault(); } );
 
 	addEventListener( 'keydown', e => {
 

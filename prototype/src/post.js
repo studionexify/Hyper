@@ -41,7 +41,9 @@ float luma( vec3 c ) { return dot( c, vec3( 0.2126, 0.7152, 0.0722 ) ); }
 
 void main() {
 	vec4 t = texture2D( tMap, vUv );
-	vec3 col = max( t.rgb, vec3( 0.0 ) );
+	uvec3 bits = floatBitsToUint( t.rgb );
+	bvec3 bad = equal( bits & uvec3( 0x7f800000u ), uvec3( 0x7f800000u ) ); // NaN or Inf from the GPU becomes black, never white
+	vec3 col = clamp( mix( t.rgb, vec3( 0.0 ), vec3( bad ) ), vec3( 0.0 ), vec3( 1.0e4 ) );
 	if ( uSharp > 0.0 ) {
 		vec3 b = ( texture2D( tMap, vUv + vec2( uTexel.x, 0.0 ) ).rgb + texture2D( tMap, vUv - vec2( uTexel.x, 0.0 ) ).rgb +
 			texture2D( tMap, vUv + vec2( 0.0, uTexel.y ) ).rgb + texture2D( tMap, vUv - vec2( 0.0, uTexel.y ) ).rgb ) * 0.25;

@@ -2,9 +2,9 @@ import { uid, clone } from './util.js';
 
 /** Everything the user can set that must survive a save: plain JSON only. */
 export const PROFILES = {
-	integrated: { name: 'Integrated graphics', budgetMB: 1024, maxTex: 1024, gpuLoad: 'low', preview: 0.5, ao: false, aa: false, dpr: 1, ptTex: 512, samples: 64, denoise: 0.5, shadow: 1024 },
-	discrete: { name: 'Discrete GPU, 2 GB', budgetMB: 2048, maxTex: 2048, gpuLoad: 'balanced', preview: 1, ao: true, aa: true, dpr: 1.25, ptTex: 1024, samples: 96, denoise: 0.35, shadow: 2048 },
-	high: { name: 'High-end GPU', budgetMB: 8192, maxTex: 4096, gpuLoad: 'max', preview: 1, ao: true, aa: true, dpr: 2, ptTex: 2048, samples: 256, denoise: 0.2, shadow: 4096 },
+	integrated: { name: 'Integrated graphics', maxTex: 2048, gpuLoad: 'low', preview: 0.5, ao: false, aa: false, dpr: 1, ptTex: 1024, samples: 64, denoise: 0.5, shadow: 1024 },
+	discrete: { name: 'Discrete GPU', maxTex: 2048, gpuLoad: 'balanced', preview: 1, ao: true, aa: true, dpr: 1.25, ptTex: 1024, samples: 96, denoise: 0.35, shadow: 2048 },
+	high: { name: 'High-end GPU', maxTex: 4096, gpuLoad: 'max', preview: 1, ao: true, aa: true, dpr: 2, ptTex: 2048, samples: 256, denoise: 0.2, shadow: 4096 },
 };
 
 export function defaultState() {
@@ -18,7 +18,7 @@ export function defaultState() {
 		lights: lightPreset( 'hero' ),
 		stage: { kit: 'sweep', color: '#d8d4cd', color2: '#c9bba9', rough: 0.9, bg: 'match', bgColor: '#d8d4cd', ribs: false },
 		post: defaultPost(),
-		render: { profile: 'integrated', tier: 1, samples: 64, bounces: 5, gpuLoad: 'low', denoise: 0.5, format: 'png', quality: 0.92, preview: 0.5, budgetMB: 1024, transparent: false, maxTex: 1024 },
+		render: { profile: 'integrated', tier: 1, samples: 64, bounces: 5, gpuLoad: 'low', denoise: 0.5, format: 'png', quality: 0.92, preview: 0.5, transparent: false, maxTex: 2048 },
 	};
 
 }

@@ -335,7 +335,7 @@ function sizeFor( tier ) { const a = ctx.E.aspectValue || 1, l = tierPx[ tier ];
 function tabOutput( b ) {
 
 	const r = S.render, [ w, hh ] = sizeFor( r.tier );
-	b.append( sec( 'Hardware', [ row( 'Profile', sel( Object.entries( PROFILES ).map( ( [ k, p ] ) => [ k, p.name ] ), () => r.profile, v => { ctx.E.applyProfile( v ); ctx.onProfile(); renderRight(); } ) ), hint( 'Sets memory budget, texture cap, preview size and GPU load together. Integrated graphics is the default.' ) ] ) );
+	b.append( sec( 'Hardware', [ row( 'Profile', sel( Object.entries( PROFILES ).map( ( [ k, p ] ) => [ k, p.name ] ), () => r.profile, v => { ctx.E.applyProfile( v ); ctx.onProfile(); renderRight(); } ) ), hint( 'Sets live-preview quality and pacing. Final renders are never capped: the engine picks tile sizes from what your GPU reports and backs off on its own if a driver refuses.' ) ] ) );
 	b.append( sec( 'Resolution', [ slider( { label: 'Size', min: 0, max: 4, step: 1, dec: 0, def: 1, get: () => r.tier, set: v => { r.tier = v; const [ ww, h2 ] = sizeFor( v ); lab.textContent = `${tierLabels[ v ]} · ${ww} × ${h2} px`; } } ),
 		h( 'div.hint', { style: { display: 'flex', justifyContent: 'space-between' } }, ...tierLabels.map( t => h( 'span', t ) ) ) ] ) );
 	const lab = h( 'div.kv', { id: 'sizeLab' }, `${tierLabels[ r.tier ]} · ${w} × ${hh} px` ); b.children[ b.children.length - 1 ].append( lab );
@@ -345,13 +345,14 @@ function tabOutput( b ) {
 		slider( { label: 'Denoise', min: 0, max: 1, def: 0.5, get: () => r.denoise, set: v => { r.denoise = v; } } ),
 		hint( 'Denoising keeps sample counts low. Raise it for fast drafts, lower it for crisp final detail.' ) ] ) );
 	b.append( sec( 'GPU load', [ chips( [ [ 'low', 'Gentle' ], [ 'balanced', 'Balanced' ], [ 'max', 'Full speed' ] ], () => r.gpuLoad, v => { r.gpuLoad = v; ctx.E.applyPTOptions(); } ),
-		row( 'Memory', sel( [ [ 1024, '1 GB' ], [ 2048, '2 GB' ], [ 4096, '4 GB' ], [ 8192, '8 GB' ] ], () => r.budgetMB, v => { r.budgetMB = + v; ctx.change( 'budget' ); } ) ),
 		row( 'Texture cap', sel( [ [ 512, '512 px' ], [ 1024, '1024 px' ], [ 2048, '2048 px' ], [ 4096, '4096 px' ] ], () => r.maxTex, v => { r.maxTex = + v; ctx.E.applyTextureCap(); toast( 'Textures re-capped to ' + v + ' px' ); } ) ),
 		row( 'Live preview', sel( [ [ 0.5, 'Half res' ], [ 1, 'Full res' ] ], () => r.preview, v => { r.preview = + v; ctx.E.resize(); } ) ) ] ) );
 	b.append( sec( 'File', [ row( 'Format', sel( [ [ 'png', 'PNG' ], [ 'jpeg', 'JPEG' ], [ 'webp', 'WebP' ] ], () => r.format, v => { r.format = v; renderRight(); } ) ),
 		...( r.format !== 'png' ? [ slider( { label: 'Quality', min: 0.5, max: 1, step: 0.01, def: 0.92, get: () => r.quality, set: v => { r.quality = v; } } ) ] : [] ),
 		chips( [ [ false, 'Opaque' ], [ true, 'Transparent' ] ], () => r.transparent || S.stage.bg === 'transparent', v => { ctx.E.setTransparent( v ); renderRight(); } ),
 		hint( 'EXR, TIFF and AVIF arrive with the standalone app. This page can only save PNG, JPEG and WebP.' ) ] ) );
+	b.append( sec( 'Engine', [ h( 'div.kv', h( 'span', 'GPU' ), h( 'b', { title: ctx.E.caps.gpu, style: { maxWidth: '170px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, ctx.E.caps.gpu.replace( /ANGLE \(|\)$/g, '' ) ) ), h( 'div.kv', h( 'span', 'Path tracer' ), h( 'b', ctx.E.ptFailed ? 'Unavailable' : 'Ready' ) ), h( 'div.kv', h( 'span', 'Tile size' ), h( 'b.num', ctx.E.diag.lastTile ? ctx.E.diag.lastTile + ' px' : 'auto' ) ),
+		full( btn( 'Copy diagnostics', async () => { try { await navigator.clipboard.writeText( ctx.E.diagnostics() ); toast( 'Diagnostics copied' ); } catch { toast( ctx.E.diagnostics().split( '\n' )[ 0 ], 6000 ); } }, 'sm', 'copy' ) ) ] ) );
 	b.append( sec( 'Render', [ full( btn( 'Render final image', () => ctx.renderFinal(), 'primary block', 'play' ) ), full( btn( 'Save scene', () => ctx.saveScene(), 'block', 'save' ) ) ] ) );
 
 }
