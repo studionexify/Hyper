@@ -260,6 +260,16 @@ export class Engine {
 
 	}
 
+	/** Transparent output needs an empty stage: remember the backdrop and restore it when switching back. */
+	setTransparent( on, bg = 'match' ) {
+
+		const st = S.stage;
+		if ( on ) { if ( st.kit !== 'none' ) { st._prevKit = st.kit; st.kit = 'none'; } st.bg = 'transparent'; S.render.transparent = true; }
+		else { S.render.transparent = false; st.bg = bg; if ( st.kit === 'none' && st._prevKit ) { st.kit = st._prevKit; delete st._prevKit; } }
+		this.rebuildStage(); R.models.forEach( m => this.dropToFloor( m ) ); this.rebuildStage(); this.updateEnvironment( true );
+
+	}
+
 	applyBackground() {
 
 		const st = S.stage;

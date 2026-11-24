@@ -324,7 +324,7 @@ function tabStage( b ) {
 	b.append( sec( 'Backdrop', [ h( 'div.cards', Object.entries( KITS ).map( ( [ id, k ] ) => h( 'button.card' + ( st.kit === id ? '.on' : '' ), { type: 'button', onclick: () => { st.kit = id; rebuild(); renderRight(); } }, h( 'div.th', { style: { background: k.css, height: '30px' } } ), h( 'div.t', k.name ) ) ) ),
 		row( 'Surface', color( () => st.color, v => { st.color = v; if ( st.bg === 'match' ) ctx.E.applyBackground(); ctx.E.rebuildStage(); } ) ), row( 'Secondary', color( () => st.color2, v => { st.color2 = v; ctx.E.rebuildStage(); } ) ),
 		slider( { label: 'Roughness', min: 0.05, max: 1, def: 0.9, get: () => st.rough, set: v => { st.rough = v; ctx.E.rebuildStage(); } } ) ] ) );
-	b.append( sec( 'Background', [ chips( [ [ 'match', 'Match' ], [ 'color', 'Colour' ], [ 'env', 'Environment' ], [ 'transparent', 'Transparent' ] ], () => st.bg, v => { st.bg = v; ctx.E.applyBackground(); renderRight(); } ),
+	b.append( sec( 'Background', [ chips( [ [ 'match', 'Match' ], [ 'color', 'Colour' ], [ 'env', 'Environment' ], [ 'transparent', 'Transparent' ] ], () => st.bg, v => { if ( v === 'transparent' ) ctx.E.setTransparent( true ); else if ( st.bg === 'transparent' ) ctx.E.setTransparent( false, v ); else { st.bg = v; ctx.E.applyBackground(); } renderRight(); } ), st.bg === 'transparent' ? hint( 'The backdrop is removed so the background can be transparent. Pick another background to bring it back.' ) : null,
 		...( st.bg === 'color' ? [ row( 'Colour', color( () => st.bgColor, v => { st.bgColor = v; ctx.E.applyBackground(); } ) ) ] : [] ) ] ) );
 
 }
@@ -350,7 +350,7 @@ function tabOutput( b ) {
 		row( 'Live preview', sel( [ [ 0.5, 'Half res' ], [ 1, 'Full res' ] ], () => r.preview, v => { r.preview = + v; ctx.E.resize(); } ) ) ] ) );
 	b.append( sec( 'File', [ row( 'Format', sel( [ [ 'png', 'PNG' ], [ 'jpeg', 'JPEG' ], [ 'webp', 'WebP' ] ], () => r.format, v => { r.format = v; renderRight(); } ) ),
 		...( r.format !== 'png' ? [ slider( { label: 'Quality', min: 0.5, max: 1, step: 0.01, def: 0.92, get: () => r.quality, set: v => { r.quality = v; } } ) ] : [] ),
-		chips( [ [ false, 'Opaque' ], [ true, 'Transparent' ] ], () => r.transparent || S.stage.bg === 'transparent', v => { r.transparent = v; if ( ! v && S.stage.bg === 'transparent' ) { S.stage.bg = 'match'; ctx.E.applyBackground(); } } ),
+		chips( [ [ false, 'Opaque' ], [ true, 'Transparent' ] ], () => r.transparent || S.stage.bg === 'transparent', v => { ctx.E.setTransparent( v ); renderRight(); } ),
 		hint( 'EXR, TIFF and AVIF arrive with the standalone app. This page can only save PNG, JPEG and WebP.' ) ] ) );
 	b.append( sec( 'Render', [ full( btn( 'Render final image', () => ctx.renderFinal(), 'primary block', 'play' ) ), full( btn( 'Save scene', () => ctx.saveScene(), 'block', 'save' ) ) ] ) );
 
