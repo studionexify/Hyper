@@ -1,0 +1,38 @@
+<title>Hyper</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+/*__CSS__*/
+</style>
+<div id="app">
+  <header id="top">
+    <div class="brand"><span class="mark"></span><span class="word">Hyper</span></div>
+    <nav class="seg" id="viewSwitch" role="tablist" aria-label="View">
+      <button role="tab" data-view="prepare" class="on">Prepare</button>
+      <button role="tab" data-view="render">Render</button>
+    </nav>
+    <div class="top-r">
+      <div id="mem" class="mem" title="Estimated GPU memory use against your budget"></div>
+      <button class="btn ghost" id="btnSaveScene" title="Save current setup as a scene"></button>
+      <button class="btn ghost icon" id="btnTheme" title="Toggle theme"></button>
+    </div>
+  </header>
+  <main id="main">
+    <aside id="left"></aside>
+    <section id="stage">
+      <div id="vp"><canvas id="cv"></canvas><div id="vpOver"></div></div>
+      <div id="toolbar"></div>
+      <div id="statusbar"></div>
+    </section>
+    <aside id="right"></aside>
+  </main>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+<input type="file" id="fileModel" multiple hidden>
+<input type="file" id="fileImage" accept="image/*" hidden>
+<input type="file" id="fileHdr" accept=".hdr,.exr" hidden>
+<input type="file" id="fileLut" accept=".cube" hidden>
+<input type="file" id="fileProject" accept=".hyper,.json" hidden>
+<script>
+/*__JS__*/
+</script>

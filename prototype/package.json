@@ -1,0 +1,20 @@
+{
+  "name": "hyper-prototype",
+  "version": "0.1.0",
+  "description": "Hyper phase-1 prototype",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "NO_MIN=1 node build.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "esbuild": "^0.28.2",
+    "occt-import-js": "^0.0.23",
+    "three": "^0.187.0",
+    "three-gpu-pathtracer": "^0.0.28",
+    "three-mesh-bvh": "^0.10.0"
+  },
+  "private": true
+}
